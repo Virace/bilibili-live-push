@@ -4,8 +4,8 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/19 2:13
-# @Update  : 2021/4/17 16:16
-# @Detail  : 斗鱼订阅推送
+# @Update  : 2021/8/17 14:19
+# @Detail  : B站直播推送，其实和斗鱼推送一样
 
 import json
 import logging
@@ -150,21 +150,19 @@ def notification_push(msg: Message, extra: dict = None):
 @check_time
 def get_status(rid: str) -> tuple:
     """
-    通过斗鱼 网页端/安卓端 搜索接口获取直播间状态
+    通过B站 网页端直播接口 get_info_by_id 获取直播信息, 支持短ID
     :param rid: 直播间ID
     :return: 返回元组格式(状态, 源)
     """
-    # url = f'https://www.douyu.com/japi/search/api/getSearchRec?kw={rid}'
-    url = f'https://apiv2.douyucdn.cn/japi/search/api/getSearchRec?kw={rid}&tagTest=a&client_sys=android'
+    url = f'https://api.live.bilibili.com/room/v1/Room/get_info_by_id?ids[]={rid}'
     request = Request()
     response = request.get(url, timeout=5)
     response.raise_for_status()
     data = response.json()['data']
     log.debug(data)
-    for item in data['recList']:
-        item = item['roomInfo']
-        if item['rid'] == int(rid):
-            return item['isLive'] == 1, item
+    for _id, item in data.items():
+        if _id == rid or item['short_id'] == rid:
+            return item['live_status'] == 1, item
     else:
         return None, None
 
@@ -201,29 +199,26 @@ def monitor_and_notify(rid: str, extra: dict = None):
     other_msg = extra.get('OTHER_MSG', None)
 
     if status:
+        # 下面一句代码也许会出现问题
+        new = time.mktime(time.strptime(data["live_time"], '%Y-%m-%d %H:%M:%S'))
         try:
             old = flag.get_time(oid)
-            if old == data["lastShowTime"]:
+            if old == new:
                 return
 
             else:
-                flag.update_time(oid, data["lastShowTime"])
+                flag.update_time(oid, new)
         except Exception as e:
             log.warning(e)
             return
         else:
-            # python3.6版本未的strftime函数进行优化
-            # 时间格式化中出现中文可能会出现UnicodeEncodeError错误
-            # 因为部署环境不同, 所以不建议使用local包进行修改
-            lst = time.strftime("%Y{}%m{}%d{} %H{}%M{}%S{}", time.localtime(data["lastShowTime"]))
-            lst = lst.format('年', '月', '日', '点', '分', '秒')
 
-            content = f'最后开播时间: {lst}<br>' \
-                      f'<img src={data["avatar"]}>'
+            content = f'开播时间: {new}<br>' \
+                      f'<img src={data["cover"]}>'
             if other_msg:
                 content = f'{content}<br>{other_msg}'
             notification_push_concurrent(
-                Message(title=f'您关注的主播 {data["nickName"]}:{data["rid"]} 正在直播!',
+                Message(title=f'您关注的主播 {data["uname"]}:{data["roomid"]} 正在直播!',
                         content=content),
                 extra
             )
